@@ -1,74 +1,46 @@
 #!/bin/bash
 
-# 脚本保存路径
-SCRIPT_PATH="$HOME/t3rn.sh"
-
-# 检查是否为root用户
+# 检查是否为 root 用户
 if [ "$EUID" -ne 0 ]; then 
     echo -e "\e[31m请使用 sudo 运行此脚本\e[0m"
     exit 1
 fi
 
-# 定义仓库地址和目录名称
-REPO_URL="git clone https://github.com/laohong0505/t3rn.git"
+# 仓库配置
 DIR_NAME="t3rn-bot"
 PYTHON_FILE="keys_and_addresses.py"
 DATA_BRIDGE_FILE="data_bridge.py"
 BOT_FILE="bot.py"
 VENV_DIR="t3rn-env"  # 虚拟环境目录
 
-# 检查是否安装了 git
-if ! command -v git &> /dev/null; then
-    echo "Git 未安装，请先安装 Git。"
-    exit 1
+# 检查并安装必要依赖
+echo "检查系统依赖..."
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-venv
+
+# 创建目录结构
+if [ ! -d "$DIR_NAME" ]; then
+    echo "创建脚本目录 $DIR_NAME..."
+    mkdir "$DIR_NAME"
 fi
 
-# 检查是否安装了 python3-pip 和 python3-venv
-if ! command -v pip3 &> /dev/null; then
-    echo "pip 未安装，正在安装 python3-pip..."
-    sudo apt update
-    sudo apt install -y python3-pip
+cd "$DIR_NAME" || exit
+
+# 创建虚拟环境
+if [ ! -d "$VENV_DIR" ]; then
+    echo "创建虚拟环境..."
+    python3 -m venv "$VENV_DIR"
 fi
 
-if ! command -v python3 -m venv &> /dev/null; then
-    echo "python3-venv 未安装，正在安装 python3-venv..."
-    sudo apt update
-    sudo apt install -y python3-venv
-fi
-
-# 拉取仓库
-if [ -d "$DIR_NAME" ]; then
-    echo "目录 $DIR_NAME 已存在，拉取最新更新..."
-    cd "$DIR_NAME" || exit
-    git pull origin main
-else
-    echo "正在克隆仓库 $REPO_URL..."
-    git clone "$REPO_URL"
-    cd "$DIR_NAME" || exit
-fi
-
-echo "已进入目录 $DIR_NAME"
-
-# 创建虚拟环境并激活
-echo "正在创建虚拟环境..."
-python3 -m venv "$VENV_DIR"
+echo "激活虚拟环境..."
 source "$VENV_DIR/bin/activate"
 
-# 升级 pip
-echo "正在升级 pip..."
+# 安装 Python 依赖
+echo "安装依赖..."
 pip install --upgrade pip
-
-# 安装依赖
-echo "正在安装依赖 web3 和 colorama..."
 pip install web3 colorama
 
-# 提醒用户私钥安全
-echo "警告：请务必确保您的私钥安全！"
-echo "私钥应当保存在安全的位置，切勿公开分享或泄漏给他人。"
-echo "如果您的私钥被泄漏，可能导致您的资产丧失！"
-echo "请输入您的私钥，确保安全操作。"
-
-# 让用户输入私钥和标签
+# 用户配置私钥和标签
 echo "请输入您的私钥（多个私钥以空格分隔）："
 read -r private_keys_input
 
@@ -85,7 +57,7 @@ if [ "${#private_keys[@]}" -ne "${#labels[@]}" ]; then
 fi
 
 # 写入 keys_and_addresses.py 文件
-echo "正在写入 $PYTHON_FILE 文件..."
+echo "写入 $PYTHON_FILE..."
 cat > $PYTHON_FILE <<EOL
 # 此文件由脚本生成
 
@@ -98,21 +70,15 @@ $(printf "    '%s',\n" "${labels[@]}")
 ]
 EOL
 
-echo "$PYTHON_FILE 文件已生成。"
-
-# 提醒用户私钥安全
-echo "脚本执行完成！所有依赖已安装，私钥和标签已保存到 $PYTHON_FILE 中。"
-echo "请务必妥善保管此文件，避免泄露您的私钥和标签信息！"
-
-# 获取额外的用户输入：Base - OP 和 OP - Base
-echo "请输入 'Base - OP' 的桥接数据值："
+# 用户配置桥接参数
+echo "请输入 Base 到 OP 的桥接合约地址："
 read -r base_op_value
 
-echo "请输入 'OP - Base' 的桥接数据值："
+echo "请输入 OP 到 Base 的桥接合约地址："
 read -r op_base_value
 
 # 写入 data_bridge.py 文件
-echo "正在写入 $DATA_BRIDGE_FILE 文件..."
+echo "写入 $DATA_BRIDGE_FILE..."
 cat > $DATA_BRIDGE_FILE <<EOL
 # 此文件由脚本生成
 
@@ -125,10 +91,75 @@ data_bridge = {
 }
 EOL
 
-echo "$DATA_BRIDGE_FILE 文件已生成。"
+# 创建 bot.py 主程序
+echo "生成 $BOT_FILE..."
+cat > $BOT_FILE <<'EOL'
+import time
+import random
+from web3 import Web3
+from colorama import Fore, Style
+from keys_and_addresses import private_keys, labels
+from data_bridge import data_bridge
 
-# 提醒用户运行 bot.py
-echo "配置完成，正在运行 bot.py..."
+# 配置链的 RPC 地址
+RPC_ENDPOINTS = {
+    "Base": "https://base-sepolia.gateway.tenderly.co",
+    "OP": "https://optimism-sepolia.gateway.tenderly.co"
+}
 
-# 运行 bot.py
+# 手动设置 gas 费用
+GAS_PRICE = int(input("请输入每链的 gas 费用（以 Gwei 为单位）：")) * (10 ** 9)
+
+# 转账金额 (0.1 ETH)
+TRANSFER_AMOUNT = Web3.toWei(0.1, "ether")
+
+# 初始化 Web3 对象
+web3 = {chain: Web3(Web3.HTTPProvider(url)) for chain, url in RPC_ENDPOINTS.items()}
+
+# 检查连接状态
+for chain, conn in web3.items():
+    if not conn.is_connected():
+        print(Fore.RED + f"无法连接到 {chain} 链的 RPC，请检查配置。" + Style.RESET_ALL)
+        exit(1)
+
+def transfer_eth(chain_from, chain_to, private_key, label):
+    account = web3[chain_from].eth.account.privateKeyToAccount(private_key)
+    balance = web3[chain_from].eth.get_balance(account.address)
+
+    print(Fore.CYAN + f"{label} 当前在 {chain_from} 链的余额为 {Web3.fromWei(balance, 'ether')} ETH" + Style.RESET_ALL)
+
+    if balance < TRANSFER_AMOUNT:
+        print(Fore.YELLOW + f"{label} 在 {chain_from} 链的余额不足，跳过操作。" + Style.RESET_ALL)
+        return False
+
+    # 构建交易
+    nonce = web3[chain_from].eth.get_transaction_count(account.address)
+    tx = {
+        "nonce": nonce,
+        "to": account.address,  # 自己转账到自己
+        "value": TRANSFER_AMOUNT,
+        "gas": 21000,
+        "gasPrice": GAS_PRICE,
+        "chainId": web3[chain_from].eth.chain_id
+    }
+
+    # 签名交易
+    signed_tx = web3[chain_from].eth.account.sign_transaction(tx, private_key)
+    tx_hash = web3[chain_from].eth.send_raw_transaction(signed_tx.rawTransaction)
+
+    print(Fore.GREEN + f"{label} 从 {chain_from} 转账到 {chain_to} 的交易已发送。" + Style.RESET_ALL)
+    print(F"交易哈希: {tx_hash.hex()}")
+
+    return True
+
+while True:
+    for i, private_key in enumerate(private_keys):
+        label = labels[i]
+        transfer_eth("Base", "OP", private_key, label)
+        time.sleep(random.randint(20, 30))
+        transfer_eth("OP", "Base", private_key, label)
+        time.sleep(random.randint(20, 30))
+EOL
+
+echo "脚本生成完成，开始运行 bot.py..."
 python3 $BOT_FILE
