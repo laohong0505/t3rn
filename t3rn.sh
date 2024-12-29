@@ -1,165 +1,96 @@
-#!/bin/bash
-
-# 检查是否为 root 用户
-if [ "$EUID" -ne 0 ]; then 
-    echo -e "\e[31m请使用 sudo 运行此脚本\e[0m"
-    exit 1
-fi
-
-# 仓库配置
-DIR_NAME="t3rn-bot"
-PYTHON_FILE="keys_and_addresses.py"
-DATA_BRIDGE_FILE="data_bridge.py"
-BOT_FILE="bot.py"
-VENV_DIR="t3rn-env"  # 虚拟环境目录
-
-# 检查并安装必要依赖
-echo "检查系统依赖..."
-sudo apt update
-sudo apt install -y git python3 python3-pip python3-venv
-
-# 创建目录结构
-if [ ! -d "$DIR_NAME" ]; then
-    echo "创建脚本目录 $DIR_NAME..."
-    mkdir "$DIR_NAME"
-fi
-
-cd "$DIR_NAME" || exit
-
-# 创建虚拟环境
-if [ ! -d "$VENV_DIR" ]; then
-    echo "创建虚拟环境..."
-    python3 -m venv "$VENV_DIR"
-fi
-
-echo "激活虚拟环境..."
-source "$VENV_DIR/bin/activate"
-
-# 安装 Python 依赖
-echo "安装依赖..."
-pip install --upgrade pip
-pip install web3 colorama
-
-# 用户配置私钥和标签
-echo "请输入您的私钥（多个私钥以空格分隔）："
-read -r private_keys_input
-
-echo "请输入您的标签（多个标签以空格分隔，与私钥顺序一致）："
-read -r labels_input
-
-# 检查输入是否一致
-IFS=' ' read -r -a private_keys <<< "$private_keys_input"
-IFS=' ' read -r -a labels <<< "$labels_input"
-
-if [ "${#private_keys[@]}" -ne "${#labels[@]}" ]; then
-    echo "私钥和标签数量不一致，请重新运行脚本并确保它们匹配！"
-    exit 1
-fi
-
-# 写入 keys_and_addresses.py 文件
-echo "写入 $PYTHON_FILE..."
-cat > $PYTHON_FILE <<EOL
-# 此文件由脚本生成
-
-private_keys = [
-$(printf "    '%s',\n" "${private_keys[@]}")
-]
-
-labels = [
-$(printf "    '%s',\n" "${labels[@]}")
-]
-EOL
-
-# 用户配置桥接参数
-echo "请输入 Base 到 OP 的桥接合约地址："
-read -r base_op_value
-
-echo "请输入 OP 到 Base 的桥接合约地址："
-read -r op_base_value
-
-# 写入 data_bridge.py 文件
-echo "写入 $DATA_BRIDGE_FILE..."
-cat > $DATA_BRIDGE_FILE <<EOL
-# 此文件由脚本生成
-
-data_bridge = {
-    # Base 到 OP 的桥接数据
-    "Base - OP": "$base_op_value",
-
-    # OP 到 Base 的桥接数据
-    "OP - Base": "$op_base_value",
-}
-EOL
-
-# 创建 bot.py 主程序
-echo "生成 $BOT_FILE..."
-cat > $BOT_FILE <<'EOL'
 import time
 import random
 from web3 import Web3
-from colorama import Fore, Style
 from keys_and_addresses import private_keys, labels
 from data_bridge import data_bridge
+from colorama import Fore, Style
 
-# 配置链的 RPC 地址
-RPC_ENDPOINTS = {
+# 用户设置的 Gas 价格（单位：gwei）
+GAS_PRICE = int(input("请输入自定义 Gas 价格（单位: gwei）："))
+
+# 转账金额（单位：wei）
+TRANSFER_AMOUNT = Web3.to_wei(0.1, "ether")
+
+# 随机延迟范围（单位：秒）
+DELAY_RANGE = (20, 30)
+
+# Base 和 OP 的 RPC 地址
+RPC_URLS = {
     "Base": "https://base-sepolia.gateway.tenderly.co",
-    "OP": "https://optimism-sepolia.gateway.tenderly.co"
+    "OP": "https://optimism-sepolia.gateway.tenderly.co",
 }
 
-# 手动设置 gas 费用
-GAS_PRICE = int(input("请输入每链的 gas 费用（以 Gwei 为单位）：")) * (10 ** 9)
+# 初始化 Web3 客户端
+web3_clients = {
+    chain: Web3(Web3.HTTPProvider(url)) for chain, url in RPC_URLS.items()
+}
 
-# 转账金额 (0.1 ETH)
-TRANSFER_AMOUNT = Web3.toWei(0.1, "ether")
-
-# 初始化 Web3 对象
-web3 = {chain: Web3(Web3.HTTPProvider(url)) for chain, url in RPC_ENDPOINTS.items()}
-
-# 检查连接状态
-for chain, conn in web3.items():
-    if not conn.is_connected():
-        print(Fore.RED + f"无法连接到 {chain} 链的 RPC，请检查配置。" + Style.RESET_ALL)
+for chain, client in web3_clients.items():
+    if not client.is_connected():
+        print(Fore.RED + f"无法连接到 {chain} 节点。请检查 RPC 地址是否正确。" + Style.RESET_ALL)
         exit(1)
 
-def transfer_eth(chain_from, chain_to, private_key, label):
-    account = web3[chain_from].eth.account.privateKeyToAccount(private_key)
-    balance = web3[chain_from].eth.get_balance(account.address)
+print(Fore.GREEN + "成功连接到所有链的节点！" + Style.RESET_ALL)
 
-    print(Fore.CYAN + f"{label} 当前在 {chain_from} 链的余额为 {Web3.fromWei(balance, 'ether')} ETH" + Style.RESET_ALL)
+# 获取用户地址
+addresses = [web3_clients["Base"].eth.account.from_key(key).address for key in private_keys]
 
-    if balance < TRANSFER_AMOUNT:
-        print(Fore.YELLOW + f"{label} 在 {chain_from} 链的余额不足，跳过操作。" + Style.RESET_ALL)
-        return False
+# 检查余额函数
+def get_balance(client, address):
+    return client.eth.get_balance(address)
 
-    # 构建交易
-    nonce = web3[chain_from].eth.get_transaction_count(account.address)
-    tx = {
-        "nonce": nonce,
-        "to": account.address,  # 自己转账到自己
+# 构建交易函数
+def build_transaction(client, from_address, to_address, private_key):
+    nonce = client.eth.get_transaction_count(from_address)
+    transaction = {
+        "to": to_address,
         "value": TRANSFER_AMOUNT,
         "gas": 21000,
-        "gasPrice": GAS_PRICE,
-        "chainId": web3[chain_from].eth.chain_id
+        "gasPrice": Web3.to_wei(GAS_PRICE, "gwei"),
+        "nonce": nonce,
     }
+    signed_txn = client.eth.account.sign_transaction(transaction, private_key)
+    return signed_txn
 
-    # 签名交易
-    signed_tx = web3[chain_from].eth.account.sign_transaction(tx, private_key)
-    tx_hash = web3[chain_from].eth.send_raw_transaction(signed_tx.rawTransaction)
+# 执行转账函数
+def execute_transfer(from_chain, to_chain, from_index):
+    from_client = web3_clients[from_chain]
+    to_client = web3_clients[to_chain]
 
-    print(Fore.GREEN + f"{label} 从 {chain_from} 转账到 {chain_to} 的交易已发送。" + Style.RESET_ALL)
-    print(F"交易哈希: {tx_hash.hex()}")
+    from_address = addresses[from_index]
+    to_address = addresses[from_index]  # 本地址互转
+    private_key = private_keys[from_index]
 
-    return True
+    balance = get_balance(from_client, from_address)
 
-while True:
-    for i, private_key in enumerate(private_keys):
-        label = labels[i]
-        transfer_eth("Base", "OP", private_key, label)
-        time.sleep(random.randint(20, 30))
-        transfer_eth("OP", "Base", private_key, label)
-        time.sleep(random.randint(20, 30))
-EOL
+    print(Fore.YELLOW + f"{labels[from_index]} 在 {from_chain} 的余额为 {Web3.from_wei(balance, 'ether')} ETH" + Style.RESET_ALL)
 
-echo "脚本生成完成，开始运行 bot.py..."
-python3 $BOT_FILE
+    if balance < TRANSFER_AMOUNT + Web3.to_wei(GAS_PRICE * 21000, "gwei"):
+        print(Fore.RED + f"{labels[from_index]} 在 {from_chain} 上的余额不足，跳过此操作。" + Style.RESET_ALL)
+        return False
+
+    try:
+        signed_txn = build_transaction(from_client, from_address, to_address, private_key)
+        tx_hash = from_client.eth.send_raw_transaction(signed_txn.rawTransaction)
+        print(Fore.GREEN + f"转账交易已发送！交易哈希: {tx_hash.hex()}" + Style.RESET_ALL)
+
+        receipt = from_client.eth.wait_for_transaction_receipt(tx_hash)
+        if receipt.status == 1:
+            print(Fore.GREEN + f"交易成功！区块哈希: {receipt.blockHash.hex()}" + Style.RESET_ALL)
+            return True
+        else:
+            print(Fore.RED + "交易失败！" + Style.RESET_ALL)
+            return False
+    except Exception as e:
+        print(Fore.RED + f"交易过程中出现错误: {str(e)}" + Style.RESET_ALL)
+        return False
+
+# 主函数
+if __name__ == "__main__":
+    while True:
+        for i in range(len(private_keys)):
+            if execute_transfer("Base", "OP", i):
+                time.sleep(random.randint(*DELAY_RANGE))
+
+            if execute_transfer("OP", "Base", i):
+                time.sleep(random.randint(*DELAY_RANGE))
