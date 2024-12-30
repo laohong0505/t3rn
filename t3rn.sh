@@ -104,12 +104,12 @@ echo "$PYTHON_FILE 文件已生成。"
 echo "脚本执行完成！所有依赖已安装，私钥和标签已保存到 $PYTHON_FILE 中。"
 echo "请务必妥善保管此文件，避免泄露您的私钥和标签信息！"
 
-# 获取额外的用户输入："ARB - OP SEPOLIA" 和 "OP - ARB"
-echo "请输入 'ARB - OP SEPOLIA' 的值："
-read -r arb_op_sepolia_value
+# 获取额外的用户输入："BASE - OP SEPOLIA" 和 "OP - BASE"
+echo "请输入 'BASE - OP SEPOLIA' 的值："
+read -r base_op_sepolia_value
 
-echo "请输入 'OP - ARB' 的值："
-read -r op_arb_value
+echo "请输入 'OP - BASE' 的值："
+read -r op_base_value
 
 # 写入 data_bridge.py 文件
 echo "正在写入 $DATA_BRIDGE_FILE 文件..."
@@ -117,11 +117,11 @@ cat > $DATA_BRIDGE_FILE <<EOL
 # 此文件由脚本生成
 
 data_bridge = {
-    # Data bridge Arbitrum Sepolia
-    "ARB - OP SEPOLIA": "$arb_op_sepolia_value",
+    # Data bridge BASE Sepolia
+    "BASE - OP SEPOLIA": "$base_op_sepolia_value",
 
     # Data bridge OP Sepolia
-    "OP - ARB": "$op_arb_value",
+    "OP - BASE": "$op_base_value",
 }
 EOL
 
