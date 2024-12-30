@@ -10,7 +10,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 定义仓库地址和目录名称
-REPO_URL="https://github.com/sdohuajia/t3rn-bot.git"
+REPO_URL="https://github.com/laohong0505/t3rn-bot.git"
 DIR_NAME="t3rn-bot"
 PYTHON_FILE="keys_and_addresses.py"
 DATA_BRIDGE_FILE="data_bridge.py"
